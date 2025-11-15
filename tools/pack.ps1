@@ -1,11 +1,12 @@
 # tools/pack.ps1
 <#
 Generic WoW addon packer/deployer for repos where repo root == addon folder.
+Run from anywhere; source folder is resolved from this script's path.
 Modes: zip | deploy | both
 Examples:
-  pwsh -File tools/pack.ps1 -Mode zip    -Version 0.1.0
-  pwsh -File tools/pack.ps1 -Mode deploy -Game retail
-  pwsh -File tools/pack.ps1 -Mode both   -Version 0.1.0 -Game classic
+  pwsh -File tools/pack.ps1 -Mode zip    -Version 0.1.0 -Open
+  pwsh -File tools/pack.ps1 -Mode deploy -Game retail -Open
+  pwsh -File tools/pack.ps1 -Mode both   -Version 0.1.1 -Game retail -Open -Pause
 #>
 [CmdletBinding()]
 param(
@@ -13,7 +14,9 @@ param(
   [ValidateSet('zip','deploy','both')][string]$Mode = 'zip',
   [ValidateSet('retail','classic')][string]$Game = 'retail',
   [string]$WowRoot,
-  [switch]$NoBump
+  [switch]$NoBump,
+  [switch]$Open,     # open output location in Explorer
+  [switch]$Pause     # wait for keypress before exiting (useful when double-clicked)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,17 +24,25 @@ function Info($m){ Write-Host "[INFO ] $m" -f Cyan }
 function Ok($m){   Write-Host "[ OK  ] $m" -f Green }
 function Warn($m){ Write-Host "[WARN ] $m" -f Yellow }
 
-# Repo root is the addon folder
-$AddonDir = (Get-Location).Path
+# --- Resolve addon root from script path (robust across CWD/Task/.bat) ---
+$ScriptDir = Split-Path -Parent $PSCommandPath
+$AddonDir  = Split-Path -Parent $ScriptDir       # ..\  -> addon root
+if (-not (Test-Path $AddonDir)) { throw "Cannot resolve addon root from script path: $PSCommandPath" }
 $AddonName = Split-Path $AddonDir -Leaf
+
+# --- TOC detection ---
 $toc = Get-ChildItem $AddonDir -Filter *.toc -File | Select-Object -First 1
 if (-not $toc) { throw "No .toc found in $AddonDir" }
 $toc = $toc.FullName
-Info "Addon: $AddonName | TOC: $toc"
+Info "Addon: $AddonName"
+Info "Source: $AddonDir"
+Info "TOC   : $toc"
 
-# Version handling (insert or update ## Version:)
-if (-not $Version -and -not $NoBump) { $Version = Read-Host "Enter version (e.g. 0.1.0)" }
-if (-not $NoBump) {
+# --- Version handling (insert or update ## Version:) ---
+if (-not $Version -and -not $NoBump -and $Mode -ne 'deploy') {
+  $Version = Read-Host "Enter version (e.g. 0.1.0)"
+}
+if (-not $NoBump -and $Mode -ne 'deploy') {
   $raw = Get-Content $toc -Raw
   if ([regex]::IsMatch($raw,'(?im)^\s*##\s*Version\s*:')) {
     $raw = [regex]::Replace($raw,'(?im)^\s*##\s*Version\s*:.*$',"## Version: $Version",1)
@@ -46,8 +57,8 @@ if (-not $NoBump) {
   Ok "TOC Version -> $Version"
 } else {
   $Version = [regex]::Match((Get-Content $toc -Raw),'(?im)^\s*##\s*Version\s*:\s*(.+?)\s*$').Groups[1].Value
-  if (-not $Version) { throw "No version in TOC; rerun without -NoBump and pass -Version." }
-  Info "Using TOC Version: $Version"
+  if (-not $Version) { Info "No version bump (deploy-only)"; $Version = "(no-bump)" }
+  else { Info "Using TOC Version: $Version" }
 }
 
 function Make-Zip([string]$addon,[string]$ver,[string]$name){
@@ -89,9 +100,19 @@ function Make-Zip([string]$addon,[string]$ver,[string]$name){
 function Get-WowRoot([string]$Override){
   if ($Override) { if (Test-Path $Override) { return (Resolve-Path $Override).Path } else { throw "WowRoot not found: $Override" } }
   $pf86=${env:ProgramFiles(x86)}; $pf=${env:ProgramFiles}
-  $cands=@((Join-Path $pf86 'World of Warcraft'), (Join-Path $pf 'World of Warcraft'), 'C:\World of Warcraft')
-  foreach ($d in (Get-PSDrive -PSProvider FileSystem | % Root)) { $cands += (Join-Path $d 'Program Files (x86)\World of Warcraft'); $cands += (Join-Path $d 'World of Warcraft') }
-  foreach ($c in $cands | Get-Unique) { if (Test-Path (Join-Path $c '_retail_')){return $c}; if (Test-Path (Join-Path $c '_classic_')){return $c} }
+  $cands=@(
+    (Join-Path $pf86 'World of Warcraft'),
+    (Join-Path $pf   'World of Warcraft'),
+    'C:\World of Warcraft'
+  )
+  foreach ($d in (Get-PSDrive -PSProvider FileSystem | % Root)) {
+    $cands += (Join-Path $d 'Program Files (x86)\World of Warcraft')
+    $cands += (Join-Path $d 'World of Warcraft')
+  }
+  foreach ($c in $cands | Get-Unique) {
+    if (Test-Path (Join-Path $c '_retail_'))  { return $c }
+    if (Test-Path (Join-Path $c '_classic_')) { return $c }
+  }
   throw "Could not auto-detect WoW root. Use -WowRoot 'C:\Program Files (x86)\World of Warcraft'"
 }
 function Get-AddOnsPath([string]$root,[string]$game){
@@ -100,29 +121,50 @@ function Get-AddOnsPath([string]$root,[string]$game){
 }
 function Deploy-Addon([string]$addon,[string]$addons,[string]$name){
   $dest = Join-Path $addons $name
+  Info "Deploying → $dest"
   if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
   New-Item -ItemType Directory -Path $dest | Out-Null
   # Exclude tooling
   robocopy $addon $dest /MIR /XD .git .github .vscode dist tools /XF *.ps1 README* LICENSE* *.zip > $null
-  Ok "Deployed → $dest"
+  if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
+  Ok "Deployed files."
+  return $dest
 }
 
+# --- Do work ---
+$zipPath = $null
+$deployPath = $null
+
 switch ($Mode) {
-  'zip'    { Make-Zip -addon $AddonDir -ver $Version -name $AddonName | Out-Null }
+  'zip'    {
+    $zipPath = Make-Zip -addon $AddonDir -ver $Version -name $AddonName
+    Info "Output ZIP: $zipPath"
+    if ($Open) { try { Invoke-Item (Split-Path -Parent $zipPath) } catch {} }
+  }
   'deploy' {
-    $root = Get-WowRoot -Override $WowRoot
+    $root   = Get-WowRoot -Override $WowRoot
     $addons = Get-AddOnsPath -root $root -game $Game
+    Info "WoW root : $root"
+    Info "AddOns   : $addons"
     if (!(Test-Path $addons)) { New-Item -ItemType Directory -Path $addons -Force | Out-Null }
-    Deploy-Addon -addon $AddonDir -addons $addons -name $AddonName | Out-Null
-    try { Invoke-Item $addons } catch {}
+    $deployPath = Deploy-Addon -addon $AddonDir -addons $addons -name $AddonName
+    if ($Open) { try { Invoke-Item $deployPath } catch {} }
   }
   'both'   {
-    Make-Zip -addon $AddonDir -ver $Version -name $AddonName | Out-Null
-    $root = Get-WowRoot -Override $WowRoot
+    $zipPath = Make-Zip -addon $AddonDir -ver $Version -name $AddonName
+    $root   = Get-WowRoot -Override $WowRoot
     $addons = Get-AddOnsPath -root $root -game $Game
+    Info "WoW root : $root"
+    Info "AddOns   : $addons"
     if (!(Test-Path $addons)) { New-Item -ItemType Directory -Path $addons -Force | Out-Null }
-    Deploy-Addon -addon $AddonDir -addons $addons -name $AddonName | Out-Null
-    try { Invoke-Item $addons } catch {}
+    $deployPath = Deploy-Addon -addon $AddonDir -addons $addons -name $AddonName
+    if ($Open) { try { Invoke-Item $deployPath } catch {} }
+    Info "Output ZIP: $zipPath"
   }
 }
+
 Ok "Done."
+if ($Pause) {
+  Write-Host ""
+  Read-Host "Press ENTER to close"
+}
