@@ -2,6 +2,9 @@
 local ADDON = ...
 local R = _G[ADDON]
 
+local PAD           = 12
+local RIGHT_GUTTER  = 24
+
 local UI = { tabs = {}, currentTab = "Items" }
 R.UI = UI
 
@@ -108,7 +111,10 @@ function UI:Init(BORDER)
 
   -- Item list
   local scroll = CreateFrame("ScrollFrame", nil, items, "UIPanelScrollFrameTemplate")
-  scroll:SetPoint("TOPLEFT", 12, -200); scroll:SetPoint("BOTTOMRIGHT", -12, 12)
+  -- scroll:SetPoint("TOPLEFT", 12, -200); scroll:SetPoint("BOTTOMRIGHT", -12, 12)
+  scroll:SetPoint("TOPLEFT",  PAD,   -200)
+  scroll:SetPoint("BOTTOMRIGHT", -(PAD + RIGHT_GUTTER), PAD)
+
   local list = CreateFrame("Frame"); list:SetSize(1,1)
   scroll:SetScrollChild(list)
   items.list = list
@@ -125,10 +131,13 @@ function UI:Init(BORDER)
 
   -- Heroes list
   local heroesScroll = CreateFrame("ScrollFrame", nil, heroes, "UIPanelScrollFrameTemplate")
-  heroesScroll:SetPoint("TOPLEFT", 12, -44)
-  heroesScroll:SetPoint("BOTTOMRIGHT", -12, 12)
+  -- heroesScroll:SetPoint("TOPLEFT", 12, -44)
+  -- heroesScroll:SetPoint("BOTTOMRIGHT", -12, 12)
+  heroesScroll:SetPoint("TOPLEFT",  PAD, -44)
+  heroesScroll:SetPoint("BOTTOMRIGHT", -(PAD + RIGHT_GUTTER), PAD)
   local heroesList = CreateFrame("Frame"); heroesList:SetSize(1,1)
   heroesScroll:SetScrollChild(heroesList)
+  self.heroesScroll = heroesScroll
   self.heroesList = heroesList
 
   -- Vaults tab
@@ -143,10 +152,13 @@ function UI:Init(BORDER)
 
   -- Vaults list
   local vaultsScroll = CreateFrame("ScrollFrame", nil, vaults, "UIPanelScrollFrameTemplate")
-  vaultsScroll:SetPoint("TOPLEFT", 12, -44)
-  vaultsScroll:SetPoint("BOTTOMRIGHT", -12, 12)
+  -- vaultsScroll:SetPoint("TOPLEFT", 12, -44)
+  -- vaultsScroll:SetPoint("BOTTOMRIGHT", -12, 12)
+  vaultsScroll:SetPoint("TOPLEFT",  PAD, -44)
+  vaultsScroll:SetPoint("BOTTOMRIGHT", -(PAD + RIGHT_GUTTER), PAD)
   local vaultsList = CreateFrame("Frame"); vaultsList:SetSize(1,1)
   vaultsScroll:SetScrollChild(vaultsList)
+  self.vaultsScroll = vaultsScroll
   self.vaultsList = vaultsList
 
   -- Tasks tab
@@ -154,7 +166,9 @@ function UI:Init(BORDER)
   self.tabs["Tasks"] = tasks
 
   local taskScroll = CreateFrame("ScrollFrame", nil, tasks, "UIPanelScrollFrameTemplate")
-  taskScroll:SetPoint("TOPLEFT", 12, -12); taskScroll:SetPoint("BOTTOMRIGHT", -12, 12)
+  -- taskScroll:SetPoint("TOPLEFT", 12, -12); taskScroll:SetPoint("BOTTOMRIGHT", -12, 12)
+  taskScroll:SetPoint("TOPLEFT",  PAD, -12)
+  taskScroll:SetPoint("BOTTOMRIGHT", -(PAD + RIGHT_GUTTER), PAD)
   local taskList = CreateFrame("Frame"); taskList:SetSize(1,1)
   taskScroll:SetScrollChild(taskList)
   tasks.list = taskList
@@ -204,7 +218,8 @@ function UI:RefreshItems()
   for key, e in pairs(R.db.items) do
     local row = CreateFrame("Frame", nil, parent)
     row:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, y)
-    row:SetSize(680, 26)
+    -- row:SetSize(680, 26)
+    row:SetSize(680 - RIGHT_GUTTER, 26)
 
     local itemID = e.itemID
     local name, link, _, quality, _, _, _, stackSize, _, icon = GetItemInfo(itemID)
@@ -255,7 +270,8 @@ function UI:RefreshTasks()
   for i, t in ipairs(R.db.tasks or {}) do
     local row = CreateFrame("Frame", nil, parent)
     row:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, y)
-    row:SetSize(680, 26)
+    -- row:SetSize(680, 26)
+    row:SetSize(680 - RIGHT_GUTTER, 26)
 
     local cb = CreateFrame("CheckButton", nil, row, "InterfaceOptionsCheckButtonTemplate")
     cb:SetPoint("LEFT", 6, 0)
@@ -305,7 +321,7 @@ function UI:RefreshTasks()
 
     y = y - 28
   end
-  parent:SetSize(680, math.abs(y)+30)
+  parent:SetSize(680 - RIGHT_GUTTER, math.abs(y) + 30)
 end
 
 
@@ -322,48 +338,55 @@ function UI:RefreshHeroes()
   if not self.heroesList then return end
   local parent = self.heroesList
   ClearChildren(parent)
+
+  -- width of the visible lane = scrollframe width - gutter
+  local laneW = ((self.heroesScroll and self.heroesScroll:GetWidth()) or 680) - RIGHT_GUTTER
+
   local y = -2
   for _, name in ipairs(R.listHeroes()) do
     local row = CreateFrame("Frame", nil, parent)
     row:SetPoint("TOPLEFT", 0, y)
-    row:SetSize(680, 24)
+    row:SetSize(laneW, 24)                         -- was 680
 
     local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    fs:SetPoint("LEFT", 6, 0)
+    fs:SetPoint("LEFT", PAD/2, 0)                  -- was 6
     fs:SetText(name)
 
     local remove = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     remove:SetSize(80, 20)
-    remove:SetPoint("RIGHT", -6, 0)
+    remove:SetPoint("RIGHT", -PAD, 0)              -- was -6
     remove:SetText("Remove")
     remove:SetScript("OnClick", function() R.removeHero(name) end)
 
     y = y - 26
   end
-  parent:SetSize(680, math.abs(y) + 30)
+  parent:SetSize(680 - RIGHT_GUTTER, math.abs(y) + 30)
 end
 
 function UI:RefreshVaults()
   if not self.vaultsList then return end
   local parent = self.vaultsList
   ClearChildren(parent)
+
+  local laneW = ((self.vaultsScroll and self.vaultsScroll:GetWidth()) or 680) - RIGHT_GUTTER
+
   local y = -2
   for _, name in ipairs(R.listVaults()) do
     local row = CreateFrame("Frame", nil, parent)
     row:SetPoint("TOPLEFT", 0, y)
-    row:SetSize(680, 24)
+    row:SetSize(laneW, 24)                         -- was 680
 
     local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    fs:SetPoint("LEFT", 6, 0)
+    fs:SetPoint("LEFT", PAD/2, 0)                  -- was 6
     fs:SetText(name)
 
     local remove = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     remove:SetSize(80, 20)
-    remove:SetPoint("RIGHT", -6, 0)
+    remove:SetPoint("RIGHT", -PAD, 0)              -- was -6
     remove:SetText("Remove")
     remove:SetScript("OnClick", function() R.removeVault(name) end)
 
     y = y - 26
   end
-  parent:SetSize(680, math.abs(y) + 30)
+  parent:SetSize(680 - RIGHT_GUTTER, math.abs(y) + 30)
 end
