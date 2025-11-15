@@ -1,6 +1,6 @@
 # .pkgmeta
 package-as: Restockr
-
+enable-nolib-creation: no
 ignore:
   - .git/**
   - .github/**
