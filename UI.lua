@@ -191,8 +191,6 @@ function UI:Init(BORDER)
     UI:RefreshVaults()
     settings.cbFaction:SetChecked(R.db.settings.crossFaction == true)
   end
-
-  UI:ShowTab("Items")
 end
 
 function UI:Toggle() if self.root:IsShown() then self.root:Hide() else self.root:Show() end end

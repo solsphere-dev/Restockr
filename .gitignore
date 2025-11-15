@@ -1,24 +1,21 @@
 # .gitignore (addon-friendly)
 
-# VCS (not needed but harmless; Git never tracks .git/)
+# VCS
 .git/
 
-# Build outputs
+# Build output
 dist/
 *.zip
 
-# Editor
+# VS Code / tooling
 .vscode/
-*.code-workspace
-
-# Tooling noise
 tools/*.log
 
-# OS junk
+# OS noise
 .DS_Store
 Thumbs.db
 
-# WoW (only if you ever open those dirs as workspaces)
+# WoW cache (safety if workspace pointed at game folder)
 WTF/
 Cache/
 Logs/

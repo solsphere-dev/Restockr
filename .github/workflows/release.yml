@@ -1,61 +1,118 @@
 # .github/workflows/release.yml
 name: release
+
 on:
   push:
-    tags: ['v*.*.*']
+    tags:
+      - 'v*'                # run on any tag like v1.0.0, v0.9.0-beta.1
+
+permissions:
+  contents: write          # needed for creating/updating releases
+
 jobs:
   build-and-release:
     runs-on: windows-latest
+
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Version from tag
         id: v
         shell: pwsh
         run: |
-          $tag="${{ github.ref_name }}"; "version=$($tag.TrimStart('v'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $tag = "${{ github.ref_name }}"
+          "version=$($tag.TrimStart('v'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Sync TOC ## Version
         shell: pwsh
         run: |
           $toc = (Get-ChildItem -Filter *.toc -File | Select-Object -First 1).FullName
           if (-not $toc) { throw "No .toc file found" }
           $raw = Get-Content $toc -Raw
+          $ver = "${{ steps.v.outputs.version }}"
           if ($raw -match '(?im)^\s*##\s*Version\s*:') {
-            $raw = [regex]::Replace($raw,'(?im)^\s*##\s*Version\s*:.*$',"## Version: ${{ steps.v.outputs.version }}",1)
+            $raw = [regex]::Replace($raw,'(?im)^\s*##\s*Version\s*:.*$',"## Version: $ver",1)
           } else {
             if ($raw -match '(?im)^\s*##\s*Title\s*:') {
-              $raw = [regex]::Replace($raw,'(?im)^\s*##\s*Title\s*:.*$',{ param($m) $m.Value + "`r`n## Version: ${{ steps.v.outputs.version }}" },1)
-            } else { $raw = "## Version: ${{ steps.v.outputs.version }}`r`n" + $raw }
+              $raw = [regex]::Replace($raw,'(?im)^\s*##\s*Title\s*:.*$',{ param($m) $m.Value + "`r`n## Version: $ver" },1)
+            } else {
+              $raw = "## Version: $ver`r`n" + $raw
+            }
           }
           Set-Content -Path $toc -Value $raw -NoNewline
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add $toc
-          git commit -m "CI: set TOC to ${{ steps.v.outputs.version }}" || echo "no changes"
-      - name: Zip (top-level folder = repo name)
+          git commit -m "CI: set TOC to $ver" || echo "no changes"
+
+      - name: Zip (whitelist files → zip)
         shell: pwsh
         run: |
           $name = Split-Path (Get-Location) -Leaf
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           $zip = "dist/$name-${{ steps.v.outputs.version }}.zip"
           if (Test-Path $zip) { Remove-Item $zip -Force }
-          $stage = Join-Path $env:TEMP ("stage-" + [guid]::NewGuid()); New-Item $stage -ItemType Directory | Out-Null
-          $container = Join-Path $stage $name; New-Item $container -ItemType Directory | Out-Null
-          $exclude = @('.git','.github','.vscode','dist','tools','*.ps1')
-          Get-ChildItem -Force -Recurse | Where-Object {
-            -not ($_.FullName -like "$stage*") -and
-            -not ($_.PSIsContainer -and $exclude -contains $_.Name) -and
-            -not ($_.Name -like '*.ps1' -and $_.DirectoryName -like '*\tools')
-          } | ForEach-Object {
-            $rel = $_.FullName.Substring((Get-Location).Path.Length).TrimStart('\','/')
-            $target = Join-Path $container $rel
-            if ($_.PSIsContainer) { if (-not (Test-Path $target)) { New-Item $target -ItemType Directory | Out-Null } }
-            else { $dir=Split-Path -Parent $target; if (-not (Test-Path $dir)) { New-Item $dir -ItemType Directory | Out-Null }; Copy-Item $_.FullName -Destination $target -Force }
+
+          # fresh staging area
+          $stage = Join-Path $env:TEMP ("stage-" + [guid]::NewGuid())
+          New-Item $stage -ItemType Directory | Out-Null
+          $container = Join-Path $stage $name
+          New-Item $container -ItemType Directory | Out-Null
+
+          # Allowed extensions for WoW addons (add more if you use them)
+          $allow = @(
+            '.lua','.toc','.xml',
+            '.tga','.blp','.png','.jpg','.jpeg',
+            '.wav','.mp3','.ogg',
+            '.ttf','.otf',
+            '.txt'
+          )
+
+          # Block any path containing these segments
+          $blockRx = '\\(\.git|\.github|\.vscode|dist|tools)(\\|$)'
+
+          # Copy allowed files only, preserving directory structure
+          Get-ChildItem -Recurse -File -Force |
+            Where-Object {
+              $allow -contains $_.Extension.ToLower() -and
+              $_.FullName -notmatch $blockRx
+            } |
+            ForEach-Object {
+              $rel = $_.FullName.Substring((Get-Location).Path.Length).TrimStart('\','/')
+              $dest = Join-Path $container $rel
+              $dir = Split-Path -Parent $dest
+              if (-not (Test-Path $dir)) { New-Item $dir -ItemType Directory -Force | Out-Null }
+              Copy-Item $_.FullName -Destination $dest -Force
+            }
+
+          # Guard: fail if anything forbidden slipped in
+          $violations = Get-ChildItem -Force -Recurse $container | Where-Object {
+            $_.FullName -match $blockRx -or
+            (!$_.PSIsContainer -and @('.ps1','.bat','.zip') -contains $_.Extension.ToLower())
           }
+          if ($violations) {
+            Write-Host "== Violations in staged content ==" -ForegroundColor Red
+            $violations | Select-Object FullName | Format-Table | Out-String | Write-Host
+            throw "Packaging guard: forbidden content present."
+          }
+
+          # Create zip from the staged root (so top-level is $name/)
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip)
           Remove-Item -Recurse -Force $stage
+
+          # Show what's inside for sanity
           Write-Host "ZIP: $zip"
+          Write-Host "Contents:"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $z=[System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zip))
+          $z.Entries | ForEach-Object { $_.FullName } | Sort-Object | Out-String | Write-Host
+          $z.Dispose()
+
+
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
@@ -64,3 +121,5 @@ jobs:
           files: dist/*
           draft: false
           prerelease: ${{ startsWith(github.ref_name, 'v0.') || contains(github.ref_name, '-beta') }}
+          overwrite: true
+

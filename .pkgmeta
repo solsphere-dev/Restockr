@@ -2,13 +2,13 @@
 package-as: Restockr
 
 ignore:
-  - .git/
-  - .github/
-  - .vscode/
-  - dist/
-  - tools/
-  - *.ps1
-  - *.bat
-  - *.zip
+  - .git/**
+  - .github/**
+  - .vscode/**
+  - dist/**
+  - tools/**
+  - "*.ps1"
+  - "*.bat"
+  - "*.zip"
   - README.md
   - LICENSE
