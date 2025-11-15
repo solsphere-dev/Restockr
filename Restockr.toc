@@ -1,0 +1,14 @@
+## Restockr/Restockr.toc
+## Interface: 110000
+## Title: Restockr
+## Notes: Restock your Heroes and keep your Vault Warehouse topped up. No full item DB required.
+## Author: You
+## Version: 0.1.0
+## SavedVariables: RestockrDB
+
+Core.lua
+Data.lua
+Scan.lua
+UI.lua
+Mail.lua
+Tasks.lua

@@ -1,0 +1,66 @@
+# .github/workflows/release.yml
+name: release
+on:
+  push:
+    tags: ['v*.*.*']
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Version from tag
+        id: v
+        shell: pwsh
+        run: |
+          $tag="${{ github.ref_name }}"; "version=$($tag.TrimStart('v'))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: Sync TOC ## Version
+        shell: pwsh
+        run: |
+          $toc = (Get-ChildItem -Filter *.toc -File | Select-Object -First 1).FullName
+          if (-not $toc) { throw "No .toc file found" }
+          $raw = Get-Content $toc -Raw
+          if ($raw -match '(?im)^\s*##\s*Version\s*:') {
+            $raw = [regex]::Replace($raw,'(?im)^\s*##\s*Version\s*:.*$',"## Version: ${{ steps.v.outputs.version }}",1)
+          } else {
+            if ($raw -match '(?im)^\s*##\s*Title\s*:') {
+              $raw = [regex]::Replace($raw,'(?im)^\s*##\s*Title\s*:.*$',{ param($m) $m.Value + "`r`n## Version: ${{ steps.v.outputs.version }}" },1)
+            } else { $raw = "## Version: ${{ steps.v.outputs.version }}`r`n" + $raw }
+          }
+          Set-Content -Path $toc -Value $raw -NoNewline
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add $toc
+          git commit -m "CI: set TOC to ${{ steps.v.outputs.version }}" || echo "no changes"
+      - name: Zip (top-level folder = repo name)
+        shell: pwsh
+        run: |
+          $name = Split-Path (Get-Location) -Leaf
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $zip = "dist/$name-${{ steps.v.outputs.version }}.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          $stage = Join-Path $env:TEMP ("stage-" + [guid]::NewGuid()); New-Item $stage -ItemType Directory | Out-Null
+          $container = Join-Path $stage $name; New-Item $container -ItemType Directory | Out-Null
+          $exclude = @('.git','.github','.vscode','dist','tools','*.ps1')
+          Get-ChildItem -Force -Recurse | Where-Object {
+            -not ($_.FullName -like "$stage*") -and
+            -not ($_.PSIsContainer -and $exclude -contains $_.Name) -and
+            -not ($_.Name -like '*.ps1' -and $_.DirectoryName -like '*\tools')
+          } | ForEach-Object {
+            $rel = $_.FullName.Substring((Get-Location).Path.Length).TrimStart('\','/')
+            $target = Join-Path $container $rel
+            if ($_.PSIsContainer) { if (-not (Test-Path $target)) { New-Item $target -ItemType Directory | Out-Null } }
+            else { $dir=Split-Path -Parent $target; if (-not (Test-Path $dir)) { New-Item $dir -ItemType Directory | Out-Null }; Copy-Item $_.FullName -Destination $target -Force }
+          }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip)
+          Remove-Item -Recurse -Force $stage
+          Write-Host "ZIP: $zip"
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.event.repository.name }} ${{ steps.v.outputs.version }}
+          files: dist/*
+          draft: false
+          prerelease: ${{ startsWith(github.ref_name, 'v0.') || contains(github.ref_name, '-beta') }}

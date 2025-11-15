@@ -1,0 +1,24 @@
+# .gitignore (addon-friendly)
+
+# VCS (not needed but harmless; Git never tracks .git/)
+.git/
+
+# Build outputs
+dist/
+*.zip
+
+# Editor
+.vscode/
+*.code-workspace
+
+# Tooling noise
+tools/*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# WoW (only if you ever open those dirs as workspaces)
+WTF/
+Cache/
+Logs/
